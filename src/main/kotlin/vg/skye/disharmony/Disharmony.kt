@@ -1,6 +1,7 @@
 package vg.skye.disharmony
 
 import com.google.common.collect.HashBiMap
+import com.mojang.authlib.GameProfile
 import dev.minn.jda.ktx.coroutines.await
 import dev.minn.jda.ktx.events.CoroutineEventListener
 import dev.minn.jda.ktx.events.onCommand
@@ -14,7 +15,6 @@ import eu.pb4.placeholders.api.Placeholders
 import eu.pb4.placeholders.api.TextParserUtils
 import eu.pb4.placeholders.api.parsers.MarkdownLiteParserV1
 import eu.pb4.placeholders.api.parsers.PatternPlaceholderParser
-import net.dv8tion.jda.api.OnlineStatus
 import net.dv8tion.jda.api.entities.Activity
 import net.dv8tion.jda.api.entities.Message
 import net.dv8tion.jda.api.entities.Role
@@ -25,11 +25,8 @@ import net.dv8tion.jda.api.events.message.MessageReceivedEvent
 import net.dv8tion.jda.api.events.session.ReadyEvent
 import net.dv8tion.jda.api.requests.GatewayIntent
 import net.fabricmc.api.ModInitializer
-import net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents
 import net.fabricmc.fabric.api.message.v1.ServerMessageEvents
-import net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents
-import net.fabricmc.loader.api.FabricLoader
 import net.minecraft.server.MinecraftServer
 import net.minecraft.text.Style
 import net.minecraft.text.Text
@@ -89,6 +86,23 @@ object Disharmony : ModInitializer, CoroutineEventListener {
 		client.presence.activity = Activity.customStatus(message)
 	}
 
+	fun checkCanJoin(profile: GameProfile): Text? {
+		if (linkMap.accounts.contains(profile.id)) return null
+
+		val code = linkCodeMap.inverse().computeIfAbsent(profile.id) {
+			"%06X".format(Random.nextInt(0..0xFFFFFF))
+		}
+		val placeholders = mapOf(
+			"code" to Text.literal(code)
+		)
+		val substituted = TextParserUtils.formatText(Config.INSTANCE.kickMessageTemplate)
+		return Placeholders.parseText(
+			substituted,
+			PatternPlaceholderParser.PREDEFINED_PLACEHOLDER_PATTERN,
+			placeholders
+		)
+	}
+
 	override fun onInitialize() {
 		ServerMessageEvents.GAME_MESSAGE.register { _, msg, overlay ->
 			if (overlay) {
@@ -104,24 +118,6 @@ object Disharmony : ModInitializer, CoroutineEventListener {
 				setUsername(sender)
 				setAvatarUrl(pfp)
 				queue()
-			}
-		}
-
-		ServerPlayConnectionEvents.INIT.register { conn, _ ->
-			if (!linkMap.accounts.contains(conn.player.uuid)) {
-				val code = linkCodeMap.inverse().computeIfAbsent(conn.player.uuid) {
-					"%06X".format(Random.nextInt(0..0xFFFFFF))
-				}
-				val placeholders = mapOf(
-					"code" to Text.literal(code)
-				)
-				val substituted = TextParserUtils.formatText(Config.INSTANCE.kickMessageTemplate)
-				val message = Placeholders.parseText(
-					substituted,
-					PatternPlaceholderParser.PREDEFINED_PLACEHOLDER_PATTERN,
-					placeholders
-				)
-				conn.disconnect(message)
 			}
 		}
 
@@ -190,6 +186,7 @@ object Disharmony : ModInitializer, CoroutineEventListener {
 			if (linkMap.accounts.inverse().remove(event.user.idLong) != null) {
 				event.reply(Config.INSTANCE.unlinkedMessage).setEphemeral(true).queue()
 			} else {
+				linkMap.save()
 				if (role != null)
 					event.guild!!.removeRoleFromMember(event.user, role!!).await()
 				event.reply(Config.INSTANCE.notLinkedMessage).setEphemeral(true).queue()
