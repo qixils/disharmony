@@ -46,10 +46,12 @@ object Disharmony : ModInitializer, CoroutineEventListener {
 		enableIntents(GatewayIntent.MESSAGE_CONTENT)
 		enableIntents(GatewayIntent.GUILD_WEBHOOKS)
 		addEventListeners(Disharmony)
+		logger.info("Disharmony: initialized client")
 	})
-	private lateinit var channel: TextChannel
-	lateinit var webhook: Webhook
-	private lateinit var role: Role
+	private var channel: TextChannel? = null
+	var webhook: Webhook? = null
+	private var role: Role? = null
+	private var server: MinecraftServer? = null
 
 	private val linkCodeMap = HashBiMap.create<String, UUID>()
 	private val linkMap = LinkData.load()
@@ -92,13 +94,13 @@ object Disharmony : ModInitializer, CoroutineEventListener {
 			if (overlay) {
 				return@register
 			}
-			channel.sendMessage(toMarkdown(msg)).queue()
+			channel?.sendMessage(toMarkdown(msg))?.queue()
 		}
 
 		ServerMessageEvents.CHAT_MESSAGE.register { msg, player, params ->
 			val sender = params.name.string
 			val pfp = Config.INSTANCE.pfpLinkTemplate.replace("%UUID%", player.uuidAsString)
-			webhook.sendMessage(toMarkdown(msg.content)).apply {
+			webhook?.sendMessage(toMarkdown(msg.content))?.apply {
 				setUsername(sender)
 				setAvatarUrl(pfp)
 				queue()
@@ -123,13 +125,20 @@ object Disharmony : ModInitializer, CoroutineEventListener {
 			}
 		}
 
+		ServerLifecycleEvents.SERVER_STARTED.register {
+			server = it
+		}
+
 		ServerLifecycleEvents.SERVER_STOPPING.register {
 			client.shutdown()
 		}
 
 		ServerLifecycleEvents.SERVER_STOPPED.register {
+			server = null
 			client.shutdownNow()
 		}
+
+		logger.info("Disharmony: initialized server event hooks")
 	}
 
 	private suspend fun onReady() {
@@ -138,11 +147,12 @@ object Disharmony : ModInitializer, CoroutineEventListener {
 			logger.error("Could not find channel specified by config!")
 		} else {
 			channel = maybe
+			val webhooks = maybe.retrieveWebhooks().await()
+			webhook = webhooks.find { webhook ->
+				webhook.name == "MC_DC_INTEGRATION"
+			} ?: maybe.createWebhook("MC_DC_INTEGRATION").await()
 		}
-		val webhooks = channel.retrieveWebhooks().await()
-		webhook = webhooks.find { webhook ->
-			webhook.name == "MC_DC_INTEGRATION"
-		} ?: channel.createWebhook("MC_DC_INTEGRATION").await()
+
 		val maybeRole = client.getRoleById(Config.INSTANCE.linkedRoleId.toLong())
 		if (maybeRole == null) {
 			logger.error("Could not find role specified by config!")
@@ -170,7 +180,8 @@ object Disharmony : ModInitializer, CoroutineEventListener {
 				event.reply(Config.INSTANCE.alreadyLinkedMessage).setEphemeral(true).queue()
 			} else {
 				linkMap.save()
-				event.guild!!.addRoleToMember(event.user, role).await()
+				if (role != null)
+					event.guild!!.addRoleToMember(event.user, role!!).await()
 				event.reply(Config.INSTANCE.linkedMessage).setEphemeral(true).queue()
 			}
 		}
@@ -179,17 +190,19 @@ object Disharmony : ModInitializer, CoroutineEventListener {
 			if (linkMap.accounts.inverse().remove(event.user.idLong) != null) {
 				event.reply(Config.INSTANCE.unlinkedMessage).setEphemeral(true).queue()
 			} else {
-				event.guild!!.removeRoleFromMember(event.user, role).await()
+				if (role != null)
+					event.guild!!.removeRoleFromMember(event.user, role!!).await()
 				event.reply(Config.INSTANCE.notLinkedMessage).setEphemeral(true).queue()
 			}
 		}
 
-		val server = FabricLoader.getInstance().gameInstance as MinecraftServer
 		val message = Config
 			.INSTANCE
 			.statusMessageTemplate
-			.replace("%count%", server.currentPlayerCount.toString())
+			.replace("%count%", server?.currentPlayerCount.toString())
 		client.presence.activity = Activity.customStatus(message)
+
+		logger.info("Disharmony: readied client")
 	}
 
 	private fun formatDiscordMessage(message: Message): Text {
@@ -225,15 +238,14 @@ object Disharmony : ModInitializer, CoroutineEventListener {
 	}
 
 	private fun onMessageReceived(event: MessageReceivedEvent) {
-		if (event.channel.idLong != channel.idLong
+		if (event.channel.idLong != channel?.idLong
 			|| event.isWebhookMessage
 			|| event.author.idLong == client.selfUser.idLong) {
 			return
 		}
-		val server = FabricLoader.getInstance().gameInstance as MinecraftServer
 		val message = formatDiscordMessage(event.message)
-		server.sendMessage(message)
-		server.playerManager.playerList.forEach {
+		server?.sendMessage(message)
+		server?.playerManager?.playerList?.forEach {
 			it.sendMessageToClient(message, false)
 		}
 	}
