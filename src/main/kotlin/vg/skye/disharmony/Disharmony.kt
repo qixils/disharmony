@@ -184,11 +184,11 @@ object Disharmony : ModInitializer, CoroutineEventListener {
 
 		client.onCommand("unlink") { event ->
 			if (linkMap.accounts.inverse().remove(event.user.idLong) != null) {
-				event.reply(Config.INSTANCE.unlinkedMessage).setEphemeral(true).queue()
-			} else {
 				linkMap.save()
 				if (role != null)
 					event.guild!!.removeRoleFromMember(event.user, role!!).await()
+				event.reply(Config.INSTANCE.unlinkedMessage).setEphemeral(true).queue()
+			} else {
 				event.reply(Config.INSTANCE.notLinkedMessage).setEphemeral(true).queue()
 			}
 		}
