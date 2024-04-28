@@ -203,7 +203,7 @@ object Disharmony : ModInitializer, CoroutineEventListener {
 	}
 
 	private fun formatDiscordMessage(message: Message): Text {
-		val replyToName = message.referencedMessage?.member?.effectiveName ?: message.referencedMessage?.author?.effectiveName
+		val replyToName = message.referencedMessage?.run { member?.effectiveName ?: author.effectiveName }
 		val replyToColorRaw = (message.referencedMessage?.member?.colorRaw ?: Role.DEFAULT_COLOR_RAW) and 0xFFFFFF
 		val replyToColorHex = "#%06X".format(replyToColorRaw)
 		val name = message.member?.effectiveName ?: message.author.effectiveName
@@ -224,7 +224,7 @@ object Disharmony : ModInitializer, CoroutineEventListener {
 		val placeholders = mapOf(
 			"content" to content,
 			"name" to Text.literal(name),
-			"replyToName" to Text.literal(replyToName),
+			"replyToName" to Text.literal(replyToName ?: ""),
 		)
 		val substituted = TextParserUtils.formatText(processed)
 		return Placeholders.parseText(
